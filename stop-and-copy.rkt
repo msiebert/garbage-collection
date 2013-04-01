@@ -76,12 +76,12 @@
 ;;param: r (number) - the location of the rest of the cons
 (define (gc:cons f r)
  (begin
-   (when (or (and (> to-ptr from-ptr) (> (+ to-ptr 3) (heap-size)))
-             (and (< to-ptr from-ptr) (> (+ to-ptr 3) (/ (heap-size) 2))))
+   (when (or (and (> to-ptr from-ptr) (>= (+ to-ptr 3) (heap-size)))
+             (and (< to-ptr from-ptr) (>= (+ to-ptr 3) (/ (heap-size) 2))))
      (stop-and-copy-cons f r))
    ;;if it's still no good, output an error message
-   (when (or (and (> to-ptr from-ptr) (> (+ to-ptr 3) (heap-size)))
-             (and (< to-ptr from-ptr) (> (+ to-ptr 3) (/ (heap-size) 2))))
+   (when (or (and (> to-ptr from-ptr) (>= (+ to-ptr 3) (heap-size)))
+             (and (< to-ptr from-ptr) (>= (+ to-ptr 3) (/ (heap-size) 2))))
      (error "gc:alloc-cons: out of memory"))
    (heap-set! to-ptr 'cons)
    (heap-set! (+ 1 to-ptr) f)
@@ -129,27 +129,48 @@
 ;;param: a (number) - the location of the data to copy
 (define (copy a)
   (begin
-   (define b "uninitialized")
-   (when (root? a)
-    (set! b (read-root a)))
-   (when (not (root? a))
-     (set! b a))
-   (when (gc:flat? b)
-     (heap-set! from-ptr (heap-ref b))
-     (heap-set! (+ 1 from-ptr) (heap-ref (+ 1 b)))
-     (set! from-ptr (+ 2 from-ptr)))
-   (when (and (gc:flat? b) (procedure? (gc:deref b)))
-                        (map copy (procedure-roots (gc:deref b))))
-   (when (gc:cons? b)
-     (heap-set! from-ptr 'cons)
-     (heap-set! (+ 1 from-ptr) (copy (gc:first b)))
-     (heap-set! (+ 2 from-ptr) (copy (gc:rest b)))
-     (set! from-ptr (+ 3 from-ptr))
-     )
-   
-   ;return the pointer to the thing we just copied
-   (if (gc:flat? b)
-       (- 2 from-ptr)
-       (- 3 from-ptr))
+    ;handle the case that copying goes out of bounds
+    (when (>= from-ptr (heap-size))
+      (error "copy: ran out of memory"))
+    (define b (read-root a))
+    (set-root! a from-ptr)
+    (when (gc:flat? b)
+      (heap-set! from-ptr (heap-ref b))
+      (heap-set! (+ 1 from-ptr) (heap-ref (+ 1 b)))
+      (set! from-ptr (+ 2 from-ptr)))
+    (when (and (gc:flat? b) (procedure? (gc:deref b)))
+      (map copy-children (procedure-roots (gc:deref b))))
+    (when (gc:cons? b)
+      (define c from-ptr)
+      (set! from-ptr (+ 3 from-ptr))
+      (heap-set! c 'cons)
+      (heap-set! (+ 1 c) (copy-children (gc:first b)))
+      (heap-set! (+ 2 c) (copy-children (gc:rest b)))
+      )
+  ))
+
+;;copy the children of a cons to the heap
+;;param: node (number) - the location of the node to copy
+;;return: (number) - the location that the node was copied to
+(define (copy-children node)
+  (begin
+    ;handle the case that copying goes out of bounds
+    (when (>= from-ptr (heap-size))
+      (error "copy: ran out of memory"))
+    
+    (define current from-ptr)
+    (when (gc:flat? node)
+      (heap-set! from-ptr (heap-ref node))
+      (heap-set! (+ 1 from-ptr) (heap-ref (+ 1 node)))
+      (set! from-ptr (+ 2 from-ptr)))
+  
+    (when (gc:cons? node)
+      (set! from-ptr (+ 3 from-ptr))
+      (heap-set! current 'cons)
+      (heap-set! (+ 1 current) (copy-children (gc:first node)))
+      (heap-set! (+ 2 current) (copy-children (gc:rest node))))
+    
+    ;return the pointer to the thing we just copied
+    current
    )
   )
